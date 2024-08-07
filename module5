@@ -1,31 +1,25 @@
 import cv2
 import speech_recognition as sr
 from googletrans import Translator
-from google.cloud import speech_v1p1beta1 as speech  # Import for Google Cloud Speech-to-Text (if used)
-import os  # Import for setting credentials (if used)
+import threading
+import queue
 
 def recognize_and_translate_speech():
     """Recognizes spoken language and translates it to English (using Google Translate).
 
     Uses speech_recognition for audio capture and Google Translate API for translation.
-    Optionally uses Google Cloud Speech-to-Text for improved accuracy (requires credentials).
     """
-
-    # Import Google Cloud libraries only if environment variables are set for credentials
-    if 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ:
-        from google.cloud import speech_v1p1beta1 as speech
-        client = speech.SpeechClient()
-    else:
-        client = None
 
     lang = input("Enter the desired language code (or leave blank for automatic detection - might not be available): ")
     recognizer = sr.Recognizer()
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
 
     def open_camera():
         """Opens the default camera and displays a live feed."""
         cap = cv2.VideoCapture(0)  # Access the default camera
 
-        while True:
+        while not stop_event.is_set():
             ret, frame = cap.read()  # Capture frame-by-frame
 
             if not ret:
@@ -33,58 +27,61 @@ def recognize_and_translate_speech():
 
             cv2.imshow('Camera Feed', frame)  # Display the frame
 
-            if cv2.waitKey(100) & 0xFF == ord('q'):  # Press 'q' to quit
+            if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to quit
+                stop_event.set()
                 break
-
-            with sr.Microphone() as source:
-                print("Adjusting for ambient noise...")
-                recognizer.adjust_for_ambient_noise(source)
-                print("Listening...")
-                audio = recognizer.listen(source)
-
-                try:
-                    if client:
-                        # Convert audio to bytes using get_wav_data()
-                        audio_content = audio.get_wav_data()
-
-                        # Configure the audio content
-                        audio = speech.RecognitionAudio(content=audio_content)
-                        config = speech.RecognitionConfig(
-                            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                            sample_rate_hertz=44100,
-                            language_code=f"{lang}" if lang else None,  # Set language code or None for automatic (if available)
-                            enable_automatic_punctuation=True
-                        )
-
-                        # Detect speech using Google Cloud Speech-to-Text (if credentials provided)
-                        response = client.recognize(config=config, audio=audio)
-                        for result in response.results:
-                            text = result.alternatives[0].transcript
-                            break  # Process only the first alternative
-
-                    else:
-                        # Use speech_recognition for basic speech recognition (without language detection)
-                        text = recognizer.recognize_google(audio)
-
-                    print("You said:", text)
-
-                    # Translate the recognized text to English
-                    translator = Translator()
-                    translated_text = translator.translate(text, dest='en').text
-                    print("Translated text (English):", translated_text)
-
-                except sr.UnknownValueError:
-                    print("Could not understand audio")
-                except sr.RequestError as e:
-                    print(f"Could not request results from Google Speech Recognition service; {e}")
-                except Exception as e:
-                    print(f"An error occurred:", e)
 
         cap.release()
         cv2.destroyAllWindows()
 
-    # Call the open_camera function to start the process
-    open_camera()
+    def audio_processing():
+        """Processes the audio from the queue."""
+        translator = Translator()
+
+        while not stop_event.is_set():
+            try:
+                audio = audio_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            try:
+                text = recognizer.recognize_google(audio)
+                print("You said:", text)
+
+                # Translate the recognized text to English
+                translated_text = translator.translate(text, dest='en').text
+                print("Translated text (English):", translated_text)
+
+            except sr.UnknownValueError:
+                print("Could not understand audio")
+            except sr.RequestError as e:
+                print(f"Could not request results from Google Speech Recognition service; {e}")
+            except Exception as e:
+                print(f"An error occurred: {e}")
+
+    def audio_capture():
+        """Captures audio from the microphone and puts it in the queue."""
+        with sr.Microphone() as source:
+            while not stop_event.is_set():
+                print("Adjusting for ambient noise...")
+                recognizer.adjust_for_ambient_noise(source)
+                print("Listening...")
+                audio = recognizer.listen(source)
+                audio_queue.put(audio)
+
+    # Start camera and audio capture threads
+    camera_thread = threading.Thread(target=open_camera)
+    audio_capture_thread = threading.Thread(target=audio_capture)
+    audio_processing_thread = threading.Thread(target=audio_processing)
+
+    camera_thread.start()
+    audio_capture_thread.start()
+    audio_processing_thread.start()
+
+    # Wait for threads to finish
+    camera_thread.join()
+    audio_capture_thread.join()
+    audio_processing_thread.join()
 
 if __name__ == "__main__":
     recognize_and_translate_speech()
