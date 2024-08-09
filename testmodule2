@@ -1,0 +1,19 @@
+import os
+
+def rename_files(directory):
+  """Renames files in the specified directory with the desired format.
+
+  Args:
+    directory: The path to the directory containing the files to be renamed.
+  """
+
+  for filename in os.listdir(directory):
+    if filename.endswith(".doc") or filename.endswith(".docx"):  # Adjust file extensions if needed
+      old_name = os.path.join(directory, filename)
+      underscore_index = filename.index('_')
+      new_name = os.path.join(directory, filename[underscore_index + 1:] + "_" + filename[:underscore_index])
+      os.rename(old_name, new_name)
+
+if __name__ == "__main__":
+  directory = "path/to/your/files"  # Replace with the actual path to your files
+  rename_files(directory)
