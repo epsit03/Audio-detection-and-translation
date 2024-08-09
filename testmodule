@@ -1,0 +1,58 @@
+import pyaudio
+import wave
+import tkinter as tk
+from google.cloud import speech_v1p1beta1 as speech
+import io
+
+# Set up the Google Cloud Speech-to-Text client
+client = speech.SpeechClient()
+
+# Set up PyAudio
+p = pyaudio.PyAudio()
+
+# Initialize GUI
+root = tk.Tk()
+root.title("Live Captions")
+text_area = tk.Text(root, wrap='word', height=15, width=50)
+text_area.pack(expand=1, fill='both')
+
+def update_text(new_text):
+    text_area.insert('end', new_text + '\n')
+    text_area.yview('end')
+
+def transcribe_audio(audio_content):
+    audio = speech.RecognitionAudio(content=audio_content)
+    config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+        sample_rate_hertz=44100,
+        language_code="en-US",
+    )
+    response = client.recognize(config=config, audio=audio)
+    for result in response.results:
+        return result.alternatives[0].transcript
+
+# Define audio stream callback
+def callback(in_data, frame_count, time_info, status):
+    transcript = transcribe_audio(in_data)
+    if transcript:
+        update_text(transcript)
+    return (in_data, pyaudio.paContinue)
+
+# Open an audio stream
+stream = p.open(format=pyaudio.paInt16,
+                channels=1,
+                rate=44100,
+                input=True,
+                stream_callback=callback)
+
+# Start the stream
+stream.start_stream()
+
+try:
+    root.mainloop()
+except KeyboardInterrupt:
+    print("Stopping...")
+finally:
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
